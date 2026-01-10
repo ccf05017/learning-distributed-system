@@ -131,18 +131,19 @@
 > 이를 해결하기 위해 sync 실패 시 WAL을 append 이전으로 롤백하는 메커니즘 추가.
 
 ### 7.1 append가 offset을 반환한다
-- [ ] append() 호출 시 쓰기 전 파일 위치(offset)를 반환한다
+- [x] append() 호출 시 쓰기 전 파일 위치(offset)를 반환한다
 
 ### 7.2 rollback으로 WAL을 되돌릴 수 있다
-- [ ] rollback(offset) 호출 시 해당 위치로 파일을 truncate한다
-- [ ] rollback 후 다시 append하면 정상 동작한다
+- [x] rollback(offset) 호출 시 해당 위치로 파일을 truncate한다
+- [x] rollback 후 다시 append하면 정상 동작한다
 
 ### 7.3 sync 실패 시 자동 롤백
-- [ ] sync() 실패 시 WAL에 불완전 레코드가 남지 않는다
-- [ ] sync 실패 후 재시작해도 실패한 연산은 복구되지 않는다 (결정적)
+- [x] sync() 실패 시 WAL에 불완전 레코드가 남지 않는다
+- [x] sync 실패 후 재시작해도 실패한 연산은 복구되지 않는다 (결정적)
 
-### 7.4 기존 비결정적 테스트를 결정적으로 전환
-- [ ] test_crash_after_flush_before_fsync_uncertain → 결정적 테스트로 변경
+### 7.4 결정적 테스트 추가
+- [x] mock 기반 결정적 테스트 추가 (test_sync_failure_leaves_no_trace_in_wal)
+- [x] SIGKILL 테스트는 OS 레벨 크래시 문서화 목적으로 불확정 유지
 
 ---
 
@@ -244,5 +245,5 @@
 - [x] Phase 4 완료 - KVStore와 WAL 통합
 - [x] Phase 5 완료 - 내구성/복구 시나리오
 - [x] Phase 6 완료 - 장애 타이밍 주입 (C1~C6)
-- [ ] Phase 7 진행 예정 - WAL 원자성 강화 (롤백 메커니즘)
-- [ ] Phase 8 예정 - WAL 손상/부분 레코드
+- [x] Phase 7 완료 - WAL 원자성 강화 (롤백 메커니즘)
+- [ ] Phase 8 진행 예정 - WAL 손상/부분 레코드

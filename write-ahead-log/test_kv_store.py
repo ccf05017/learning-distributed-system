@@ -1,6 +1,11 @@
 """KV Store 기본 동작 테스트 (A 시나리오)"""
 
+from unittest.mock import patch
+
+import pytest
+
 from kv_store import KVStore
+from wal import WAL
 
 
 class TestBasicOperations:
@@ -154,3 +159,46 @@ class TestDurability:
 
         store2 = KVStore(data_dir=tmp_path)
         assert store2.get("key1") is None
+
+
+class TestSyncFailureRollback:
+    """7.3 sync 실패 시 자동 롤백"""
+
+    def test_sync_failure_leaves_no_trace_in_wal(self, tmp_path):
+        """sync 실패 시 WAL에 불완전 레코드가 남지 않는다"""
+        store = KVStore(data_dir=tmp_path)
+        store.put("key1", "value1")
+        store.put("key2", "value2")
+
+        # sync 실패 시뮬레이션
+        with patch.object(store._wal, "sync", side_effect=IOError("Disk full")):
+            with pytest.raises(IOError):
+                store.put("key3", "value3")
+
+        store.close()
+
+        # WAL에는 key1, key2만 있어야 함
+        wal_path = tmp_path / "wal.log"
+        records = list(WAL.read(wal_path))
+        assert len(records) == 2
+        assert records[0].key == "key1"
+        assert records[1].key == "key2"
+
+    def test_sync_failure_no_recovery_after_restart(self, tmp_path):
+        """sync 실패 후 재시작해도 실패한 연산은 복구되지 않는다"""
+        store = KVStore(data_dir=tmp_path)
+        store.put("key1", "value1")
+        store.put("key2", "value2")
+
+        # sync 실패 시뮬레이션
+        with patch.object(store._wal, "sync", side_effect=IOError("Disk full")):
+            with pytest.raises(IOError):
+                store.put("key3", "value3")
+
+        store.close()
+
+        # 재시작 후 key3는 없어야 함
+        store2 = KVStore(data_dir=tmp_path)
+        assert store2.get("key1") == "value1"
+        assert store2.get("key2") == "value2"
+        assert store2.get("key3") is None

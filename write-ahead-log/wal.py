@@ -27,10 +27,12 @@ class WAL:
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.close()
 
-    def append(self, record: WALRecord) -> None:
+    def append(self, record: WALRecord) -> int:
+        offset = self._file.tell()
         self._file.write(record.serialize())
         if self._post_append_hook:
             self._post_append_hook()
+        return offset
 
     def sync(self) -> None:
         self._file.flush()
@@ -39,6 +41,10 @@ class WAL:
         os.fsync(self._file.fileno())
         if self._post_sync_hook:
             self._post_sync_hook()
+
+    def rollback(self, offset: int) -> None:
+        self._file.seek(offset)
+        self._file.truncate()
 
     def close(self) -> None:
         self.sync()

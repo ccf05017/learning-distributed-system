@@ -43,8 +43,12 @@ class KVStore:
     def put(self, key: str, value: str) -> None:
         record = WALRecord(RecordType.PUT, key, value)
         if self._wal:
-            self._wal.append(record)
-            self._wal.sync()
+            offset = self._wal.append(record)
+            try:
+                self._wal.sync()
+            except Exception:
+                self._wal.rollback(offset)
+                raise
         self._apply_record(record)
 
     def get(self, key: str) -> str | None:
@@ -53,8 +57,12 @@ class KVStore:
     def delete(self, key: str) -> None:
         record = WALRecord(RecordType.DEL, key)
         if self._wal:
-            self._wal.append(record)
-            self._wal.sync()
+            offset = self._wal.append(record)
+            try:
+                self._wal.sync()
+            except Exception:
+                self._wal.rollback(offset)
+                raise
         self._apply_record(record)
 
     def close(self) -> None:
