@@ -109,3 +109,4 @@ Always write one test at a time, make it run, then improve structure. Always run
 # Python-specific
 
 Prefer functional programming style over imperative style in Python.
+Always use 'uv' for managing python dependencies.
