@@ -349,3 +349,87 @@ class TestCheckpoint:
         store2 = KVStore(data_dir=tmp_path)
         assert store2.get("key1") == "value1"
         assert store2.get("key2") == "value2"
+
+
+class TestReplayIdempotency:
+    """F. 재적용 안전성 - Replay 멱등성"""
+
+    def test_multiple_wal_replays_produce_same_state(self, tmp_path):
+        """F1. 동일 WAL 여러 번 replay해도 동일한 최종 상태
+        Given: WAL에 여러 연산이 기록됨
+        When: WAL을 여러 번 replay
+        Then: 매번 동일한 최종 상태
+        """
+        # WAL 생성
+        store = KVStore(data_dir=tmp_path)
+        store.put("key1", "value1")
+        store.put("key2", "value2")
+        store.put("key1", "updated1")
+        store.delete("key2")
+        store.put("key3", "value3")
+        store.close()
+
+        # 첫 번째 replay
+        store1 = KVStore(data_dir=tmp_path)
+        state1 = {
+            "key1": store1.get("key1"),
+            "key2": store1.get("key2"),
+            "key3": store1.get("key3"),
+        }
+        store1.close()
+
+        # 두 번째 replay
+        store2 = KVStore(data_dir=tmp_path)
+        state2 = {
+            "key1": store2.get("key1"),
+            "key2": store2.get("key2"),
+            "key3": store2.get("key3"),
+        }
+        store2.close()
+
+        # 세 번째 replay
+        store3 = KVStore(data_dir=tmp_path)
+        state3 = {
+            "key1": store3.get("key1"),
+            "key2": store3.get("key2"),
+            "key3": store3.get("key3"),
+        }
+
+        # 모든 replay 결과가 동일해야 함
+        assert state1 == state2 == state3
+        assert state1 == {"key1": "updated1", "key2": None, "key3": "value3"}
+
+    def test_duplicate_put_records_produce_correct_result(self, tmp_path):
+        """F2. 중복 PUT 레코드도 올바른 결과
+        Given: 동일 키에 대한 PUT이 여러 번 기록됨
+        When: WAL replay
+        Then: 마지막 값이 최종 상태
+        """
+        store = KVStore(data_dir=tmp_path)
+
+        # 동일 키에 여러 번 PUT (실제로 이런 일이 발생할 수 있음)
+        store.put("key1", "v1")
+        store.put("key1", "v2")
+        store.put("key1", "v3")
+        store.put("key1", "v4")
+        store.put("key1", "final")
+        store.close()
+
+        # replay
+        store2 = KVStore(data_dir=tmp_path)
+        assert store2.get("key1") == "final"
+
+    def test_delete_then_put_same_key(self, tmp_path):
+        """F2b. 삭제 후 다시 PUT해도 올바른 결과
+        Given: PUT → DELETE → PUT 순서로 기록
+        When: WAL replay
+        Then: 마지막 PUT 값이 최종 상태
+        """
+        store = KVStore(data_dir=tmp_path)
+        store.put("key1", "value1")
+        store.delete("key1")
+        store.put("key1", "resurrected")
+        store.close()
+
+        store2 = KVStore(data_dir=tmp_path)
+        assert store2.get("key1") == "resurrected"

@@ -189,12 +189,15 @@
 
 ## Phase 10: 재적용 안전성 (F 시나리오)
 > Replay 멱등성 검증
+>
+> **결과**: PUT/DELETE가 본질적으로 idempotent하므로 추가 구현 없이 통과
 
 ### 10.1 동일 WAL 여러 번 replay (F1)
-- [ ] 매번 동일한 최종 상태
+- [x] 매번 동일한 최종 상태
 
 ### 10.2 중복 레코드 처리 (F2)
-- [ ] 중복 PUT도 올바른 결과
+- [x] 중복 PUT도 올바른 결과 (마지막 값이 최종 상태)
+- [x] DELETE 후 PUT도 정상 동작
 
 ---
 
@@ -251,4 +254,5 @@
 - [x] Phase 7 완료 - WAL 원자성 강화 (롤백 메커니즘)
 - [x] Phase 8 완료 - WAL 손상/부분 레코드
 - [x] Phase 9 완료 - 체크포인트/로그 롤링 (write-tmp-then-rename)
-- [ ] Phase 10 진행 예정 - 재적용 안전성
+- [x] Phase 10 완료 - 재적용 안전성 (idempotent by design)
+- [ ] Phase 11 진행 예정 - 경계/예외 케이스
