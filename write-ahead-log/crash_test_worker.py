@@ -4,7 +4,11 @@ subprocess로 실행되어 특정 시점에 마커 파일을 생성하고 대기
 테스트에서 SIGKILL로 종료하여 크래시를 시뮬레이션한다.
 
 사용법:
-    python crash_test_worker.py <data_dir> <crash_point> <marker_file> <key> <value>
+    python crash_test_worker.py <data_dir> <crash_point> <marker_file> <operation> <key> [value]
+
+operation:
+    - put: PUT 연산 (value 필수)
+    - delete: DELETE 연산 (value 불필요)
 
 crash_point:
     - post_append: append 후, sync 전
@@ -27,15 +31,16 @@ def create_marker_and_wait(marker_path: Path) -> None:
 
 
 def main() -> None:
-    if len(sys.argv) != 6:
-        print(f"Usage: {sys.argv[0]} <data_dir> <crash_point> <marker_file> <key> <value>")
+    if len(sys.argv) < 6:
+        print(f"Usage: {sys.argv[0]} <data_dir> <crash_point> <marker_file> <operation> <key> [value]")
         sys.exit(1)
 
     data_dir = Path(sys.argv[1])
     crash_point = sys.argv[2]
     marker_file = Path(sys.argv[3])
-    key = sys.argv[4]
-    value = sys.argv[5]
+    operation = sys.argv[4]
+    key = sys.argv[5]
+    value = sys.argv[6] if len(sys.argv) > 6 else None
 
     hooks = {
         "post_append_hook": None,
@@ -54,7 +59,18 @@ def main() -> None:
         sys.exit(1)
 
     store = KVStore(data_dir=data_dir, **hooks)
-    store.put(key, value)
+
+    if operation == "put":
+        if value is None:
+            print("PUT operation requires value")
+            sys.exit(1)
+        store.put(key, value)
+    elif operation == "delete":
+        store.delete(key)
+    else:
+        print(f"Unknown operation: {operation}")
+        sys.exit(1)
+
     store.close()
 
 

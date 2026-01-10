@@ -44,22 +44,27 @@ def spawn_and_kill(
     data_dir: Path,
     crash_point: str,
     marker_file: Path,
+    operation: str,
     key: str,
-    value: str,
+    value: str | None = None,
 ) -> None:
     """Worker 프로세스를 시작하고 마커 확인 후 SIGKILL"""
     worker_script = Path(__file__).parent / "crash_test_worker.py"
 
+    args = [
+        sys.executable,
+        str(worker_script),
+        str(data_dir),
+        crash_point,
+        str(marker_file),
+        operation,
+        key,
+    ]
+    if value is not None:
+        args.append(value)
+
     proc = subprocess.Popen(
-        [
-            sys.executable,
-            str(worker_script),
-            str(data_dir),
-            crash_point,
-            str(marker_file),
-            key,
-            value,
-        ],
+        args,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
@@ -142,7 +147,7 @@ class TestC2AppendAfterSyncBefore:
         store.put("key2", "value2")
         store.close()
 
-        spawn_and_kill(tmp_path, "post_append", marker_file, "key3", "value3")
+        spawn_and_kill(tmp_path, "post_append", marker_file, "put", "key3", "value3")
 
         store2 = KVStore(data_dir=tmp_path)
         assert store2.get("key1") == "value1"
@@ -161,7 +166,7 @@ class TestC2AppendAfterSyncBefore:
         store.put("key2", "value2")
         store.close()
 
-        spawn_and_kill(tmp_path, "post_flush", marker_file, "key3", "value3")
+        spawn_and_kill(tmp_path, "post_flush", marker_file, "put", "key3", "value3")
 
         store2 = KVStore(data_dir=tmp_path)
         assert store2.get("key1") == "value1"
@@ -188,9 +193,53 @@ class TestC3SyncAfterCrash:
         store.put("key2", "value2")
         store.close()
 
-        spawn_and_kill(tmp_path, "post_sync", marker_file, "key3", "value3")
+        spawn_and_kill(tmp_path, "post_sync", marker_file, "put", "key3", "value3")
 
         store2 = KVStore(data_dir=tmp_path)
         assert store2.get("key1") == "value1"
         assert store2.get("key2") == "value2"
         assert store2.get("key3") == "value3"
+
+
+# === C6: DEL 장애 타이밍 ===
+
+
+class TestC6DeleteCrash:
+    """C6. DEL 장애 타이밍 → PUT과 동일 패턴 적용"""
+
+    def test_delete_crash_before_append_keeps_data(self, tmp_path):
+        """C6. DEL append 이전 크래시 → 삭제 안 됨 (데이터 유지)
+        Given: key1이 존재하는 상태
+        When: DEL 중 append 전에 크래시
+        Then: 재시작 후 key1 여전히 존재
+        """
+        store = KVStore(data_dir=tmp_path)
+        store.put("key1", "value1")
+
+        with patch.object(store._wal, "append", side_effect=Exception("Crash!")):
+            try:
+                store.delete("key1")
+            except Exception:
+                pass
+
+        store.close()
+
+        store2 = KVStore(data_dir=tmp_path)
+        assert store2.get("key1") == "value1"  # 삭제 안 됨
+
+    def test_delete_crash_after_sync_removes_data(self, tmp_path):
+        """C6. DEL fsync 후 크래시 → 삭제 상태 복구
+        Given: key1이 존재하는 상태
+        When: DEL 중 sync 완료 후 크래시
+        Then: 재시작 후 key1 없음 (삭제됨)
+        """
+        marker_file = tmp_path / "marker"
+
+        store = KVStore(data_dir=tmp_path)
+        store.put("key1", "value1")
+        store.close()
+
+        spawn_and_kill(tmp_path, "post_sync", marker_file, "delete", "key1")
+
+        store2 = KVStore(data_dir=tmp_path)
+        assert store2.get("key1") is None  # 삭제됨
