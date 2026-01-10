@@ -202,3 +202,150 @@ class TestSyncFailureRollback:
         assert store2.get("key1") == "value1"
         assert store2.get("key2") == "value2"
         assert store2.get("key3") is None
+
+
+class TestCheckpoint:
+    """E. 체크포인트/로그 롤링"""
+
+    def test_checkpoint_only_recovery(self, tmp_path):
+        """E1. 체크포인트 후 재시작 - checkpoint만으로 복구
+        Given: PUT 후 checkpoint 수행
+        When: 재시작
+        Then: checkpoint에서 상태 복구
+        """
+        store = KVStore(data_dir=tmp_path)
+        store.put("key1", "value1")
+        store.put("key2", "value2")
+        store.checkpoint()
+        store.close()
+
+        # 재시작 후 복구
+        store2 = KVStore(data_dir=tmp_path)
+        assert store2.get("key1") == "value1"
+        assert store2.get("key2") == "value2"
+
+    def test_checkpoint_plus_new_wal_recovery(self, tmp_path):
+        """E2. 체크포인트 후 새 WAL - checkpoint + 새 WAL replay
+        Given: checkpoint 후 새로운 PUT 수행
+        When: 재시작
+        Then: checkpoint + WAL 모두에서 복구
+        """
+        store = KVStore(data_dir=tmp_path)
+        store.put("key1", "value1")
+        store.put("key2", "value2")
+        store.checkpoint()
+
+        # 체크포인트 이후 새 데이터
+        store.put("key3", "value3")
+        store.put("key1", "updated1")  # 기존 키 업데이트
+        store.close()
+
+        # 재시작 후 복구 - checkpoint + WAL 모두 반영
+        store2 = KVStore(data_dir=tmp_path)
+        assert store2.get("key1") == "updated1"  # WAL에서 덮어씀
+        assert store2.get("key2") == "value2"    # checkpoint에서
+        assert store2.get("key3") == "value3"    # WAL에서
+
+    def test_checkpoint_rename_failure_leaves_old_intact_and_cleans_tmp(self, tmp_path):
+        """E3. checkpoint rename 실패 시 이전 checkpoint 유지 및 tmp 정리
+        Given: 첫 번째 checkpoint 완료
+        When: 두 번째 checkpoint 중 rename 실패
+        Then: 이전 checkpoint.json 유지, tmp 파일 자체 정리됨
+        """
+        import os
+
+        store = KVStore(data_dir=tmp_path)
+        store.put("key1", "value1")
+        store.checkpoint()
+
+        checkpoint_path = tmp_path / "checkpoint.json"
+        old_content = checkpoint_path.read_text()
+
+        store.put("key2", "value2")
+
+        # rename 실패 시뮬레이션
+        with patch.object(os, "rename", side_effect=IOError("Rename failed")):
+            with pytest.raises(IOError):
+                store.checkpoint()
+
+        # 이전 checkpoint가 손상되지 않았어야 함
+        assert checkpoint_path.read_text() == old_content
+
+        # tmp 파일은 자체 정리되어 없어야 함
+        checkpoint_tmp = tmp_path / "checkpoint.tmp"
+        assert not checkpoint_tmp.exists()
+
+    def test_startup_cleans_orphaned_checkpoint_tmp(self, tmp_path):
+        """E3b. 시작 시 고아 checkpoint.tmp 청소 (SIGKILL 시나리오)
+        Given: SIGKILL로 인해 checkpoint.tmp가 남아있는 상태
+        When: 재시작
+        Then: checkpoint.tmp 삭제, checkpoint.json + WAL로 복구
+        """
+        store = KVStore(data_dir=tmp_path)
+        store.put("key1", "value1")
+        store.checkpoint()
+        store.put("key2", "value2")
+        store.close()
+
+        # SIGKILL 시뮬레이션: checkpoint.tmp가 남아있음
+        checkpoint_tmp = tmp_path / "checkpoint.tmp"
+        checkpoint_tmp.write_text('{"key1": "corrupted", "key2": "corrupted"}')
+
+        # 재시작 - tmp 파일 무시하고 정상 복구
+        store2 = KVStore(data_dir=tmp_path)
+        assert store2.get("key1") == "value1"
+        assert store2.get("key2") == "value2"
+
+        # tmp 파일이 청소됨
+        assert not checkpoint_tmp.exists()
+
+    def test_crash_after_checkpoint_rename_before_wal_truncate(self, tmp_path):
+        """E4. checkpoint rename 직후 크래시 - WAL truncate 전
+        Given: checkpoint.json rename 완료
+        When: WAL rollback(truncate) 전 크래시
+        Then: 재시작 시 checkpoint + WAL 중복 적용해도 정상 (idempotent)
+        """
+        store = KVStore(data_dir=tmp_path)
+        store.put("key1", "value1")
+        store.put("key2", "value2")
+
+        # rollback을 무효화해서 WAL truncate 안 되게 함
+        with patch.object(store._wal, "rollback"):
+            store.checkpoint()
+
+        # checkpoint 파일은 저장됨
+        checkpoint_path = tmp_path / "checkpoint.json"
+        assert checkpoint_path.exists()
+
+        # WAL은 truncate 안 됨 (레코드 여전히 있음)
+        wal_path = tmp_path / "wal.log"
+        assert wal_path.stat().st_size > 0
+
+        store.close()
+
+        # 재시작 - checkpoint + WAL 모두 적용해도 정상
+        store2 = KVStore(data_dir=tmp_path)
+        assert store2.get("key1") == "value1"
+        assert store2.get("key2") == "value2"
+
+    def test_crash_after_wal_truncate_safe(self, tmp_path):
+        """E5. WAL truncate 후 크래시 - checkpoint만으로 복구
+        Given: checkpoint 완료, WAL truncate 완료
+        When: 크래시 후 재시작
+        Then: checkpoint만으로 정상 복구
+        """
+        store = KVStore(data_dir=tmp_path)
+        store.put("key1", "value1")
+        store.put("key2", "value2")
+        store.checkpoint()
+
+        # checkpoint 후 WAL은 비어있어야 함
+        wal_path = tmp_path / "wal.log"
+        assert wal_path.stat().st_size == 0
+
+        store.close()
+
+        # 재시작 - checkpoint만으로 복구
+        store2 = KVStore(data_dir=tmp_path)
+        assert store2.get("key1") == "value1"
+        assert store2.get("key2") == "value2"

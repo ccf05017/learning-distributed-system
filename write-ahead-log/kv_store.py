@@ -1,5 +1,7 @@
 """WAL 기반 KV Store"""
 
+import json
+import os
 from collections.abc import Callable
 from pathlib import Path
 
@@ -17,11 +19,26 @@ class KVStore:
     ):
         self._data = {}
         self._wal = None
+        self._data_dir = data_dir
 
         if data_dir:
+            checkpoint_path = data_dir / "checkpoint.json"
+            checkpoint_tmp = data_dir / "checkpoint.tmp"
             wal_path = data_dir / "wal.log"
+
+            # 이전 실행의 고아 tmp 파일 청소 (SIGKILL 등)
+            if checkpoint_tmp.exists():
+                checkpoint_tmp.unlink()
+
+            # 체크포인트에서 복구
+            if checkpoint_path.exists():
+                with open(checkpoint_path) as f:
+                    self._data = json.load(f)
+
+            # WAL replay (체크포인트 이후 기록)
             if wal_path.exists():
                 self._recover(wal_path)
+
             self._wal = WAL(
                 wal_path,
                 post_append_hook=post_append_hook,
@@ -64,6 +81,36 @@ class KVStore:
                 self._wal.rollback(offset)
                 raise
         self._apply_record(record)
+
+    def checkpoint(self) -> None:
+        """현재 상태를 체크포인트로 저장하고 WAL을 초기화"""
+        if not self._data_dir:
+            return
+
+        # WAL을 먼저 sync하여 모든 데이터가 디스크에 있도록 함
+        if self._wal:
+            self._wal.sync()
+
+        checkpoint_path = self._data_dir / "checkpoint.json"
+        checkpoint_tmp = self._data_dir / "checkpoint.tmp"
+
+        # tmp 파일에 먼저 작성
+        with open(checkpoint_tmp, "w") as f:
+            json.dump(self._data, f)
+            f.flush()
+            os.fsync(f.fileno())
+
+        # atomic rename (POSIX)
+        try:
+            os.rename(checkpoint_tmp, checkpoint_path)
+        except Exception:
+            # 실패 시 tmp 파일 정리
+            checkpoint_tmp.unlink(missing_ok=True)
+            raise
+
+        # WAL 초기화 (체크포인트에 모든 상태가 있으므로)
+        if self._wal:
+            self._wal.rollback(0)
 
     def close(self) -> None:
         if self._wal:

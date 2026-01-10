@@ -166,21 +166,24 @@
 
 ## Phase 9: 체크포인트/로그 롤링 (E 시나리오)
 > 스냅샷 + truncate 안전성
+>
+> **구현 내용**: checkpoint()가 write-tmp-then-rename 패턴으로 crash-safe하게 동작
 
 ### 9.1 체크포인트 후 재시작 (E1)
-- [ ] checkpoint만으로 복구
+- [x] checkpoint만으로 복구
 
 ### 9.2 체크포인트 후 새 WAL (E2)
-- [ ] checkpoint + 새 WAL replay
+- [x] checkpoint + 새 WAL replay
 
 ### 9.3 checkpoint.tmp 작성 중 크래시 (E3)
-- [ ] 이전 checkpoint + WAL로 복구
+- [x] rename 실패 시 이전 checkpoint 유지 및 tmp 자체 정리
+- [x] 시작 시 고아 checkpoint.tmp 청소 (SIGKILL 시나리오)
 
 ### 9.4 checkpoint rename 직후 크래시 (E4)
-- [ ] 새 checkpoint 유효성 확인
+- [x] WAL truncate 전 크래시 → checkpoint + WAL 중복 적용해도 안전 (idempotent)
 
 ### 9.5 WAL 삭제 타이밍 크래시 (E5)
-- [ ] 삭제 전/후 모두 안전
+- [x] truncate 후 크래시 → checkpoint만으로 복구
 
 ---
 
@@ -247,4 +250,5 @@
 - [x] Phase 6 완료 - 장애 타이밍 주입 (C1~C6)
 - [x] Phase 7 완료 - WAL 원자성 강화 (롤백 메커니즘)
 - [x] Phase 8 완료 - WAL 손상/부분 레코드
-- [ ] Phase 9 진행 예정 - 체크포인트/로그 롤링
+- [x] Phase 9 완료 - 체크포인트/로그 롤링 (write-tmp-then-rename)
+- [ ] Phase 10 진행 예정 - 재적용 안전성
