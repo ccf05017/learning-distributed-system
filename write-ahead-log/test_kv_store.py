@@ -125,3 +125,32 @@ class TestDurability:
 
         store2 = KVStore(data_dir=tmp_path)
         assert store2.get("key1") == "value1"
+
+    def test_last_value_persists_after_multiple_updates(self, tmp_path):
+        """B2. 여러 업데이트 후 재시작
+        Given: 동일 키에 여러 번 PUT 수행
+        When: 정상 종료 후 재시작
+        Then: GET(k)는 마지막 값을 반환한다
+        """
+        store = KVStore(data_dir=tmp_path)
+        store.put("key1", "value1")
+        store.put("key1", "value2")
+        store.put("key1", "value3")
+        store.close()
+
+        store2 = KVStore(data_dir=tmp_path)
+        assert store2.get("key1") == "value3"
+
+    def test_delete_persists_after_restart(self, tmp_path):
+        """B3. 삭제 후 재시작
+        Given: PUT 후 DEL 수행
+        When: 정상 종료 후 재시작
+        Then: GET(k)는 None을 반환한다
+        """
+        store = KVStore(data_dir=tmp_path)
+        store.put("key1", "value1")
+        store.delete("key1")
+        store.close()
+
+        store2 = KVStore(data_dir=tmp_path)
+        assert store2.get("key1") is None
