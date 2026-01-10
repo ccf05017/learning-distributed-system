@@ -1,5 +1,6 @@
 """WAL 기반 KV Store"""
 
+from collections.abc import Callable
 from pathlib import Path
 
 from wal import WAL
@@ -7,7 +8,13 @@ from wal_record import RecordType, WALRecord
 
 
 class KVStore:
-    def __init__(self, data_dir: Path | None = None):
+    def __init__(
+        self,
+        data_dir: Path | None = None,
+        post_append_hook: Callable[[], None] | None = None,
+        post_flush_hook: Callable[[], None] | None = None,
+        post_sync_hook: Callable[[], None] | None = None,
+    ):
         self._data = {}
         self._wal = None
 
@@ -15,7 +22,12 @@ class KVStore:
             wal_path = data_dir / "wal.log"
             if wal_path.exists():
                 self._recover(wal_path)
-            self._wal = WAL(wal_path)
+            self._wal = WAL(
+                wal_path,
+                post_append_hook=post_append_hook,
+                post_flush_hook=post_flush_hook,
+                post_sync_hook=post_sync_hook,
+            )
 
     def _apply_record(self, record: WALRecord) -> None:
         if record.record_type == RecordType.PUT:

@@ -91,24 +91,34 @@
 
 ## Phase 6: 장애 타이밍 주입 (C 시나리오)
 > Write Path 각 단계에서 크래시 시 동작 검증
+>
+> **커밋 포인트**: fsync 완료 시점. 이전은 미커밋, 이후는 커밋됨.
 
 ### 6.1 WAL append 이전 크래시 (C1)
-- [ ] 크래시 후 재시작 → 데이터 없음
+- [x] 크래시 후 재시작 → 데이터 없음
 
 ### 6.2 WAL append 후 fsync 전 크래시 (C2)
-- [ ] 미커밋 상태 검증
+- [x] 미커밋 상태 → 클라이언트에 실패 전달, 메모리 미반영 (mock)
+- [x] append 후 sync 전: Python 버퍼 유실 (SIGKILL)
+- [x] flush 후 fsync 전: 불확정 상태 문서화 (SIGKILL 한계)
 
 ### 6.3 WAL fsync 후 MemTable 적용 전 크래시 (C3)
-- [ ] 재시작 후 WAL replay로 복구
+- [x] 재시작 후 WAL replay로 복구 (SIGKILL)
 
 ### 6.4 MemTable 적용 후 ack 전 크래시 (C4)
-- [ ] 재시작 후 데이터 존재
+- [x] C3와 동치: fsync 완료 = 커밋됨, WAL에서 복구 가능
 
 ### 6.5 ack 반환 후 크래시 (C5)
-- [ ] 성공 ack의 의미 보장
+- [x] C3와 동치: 정상 완료 후 크래시, 당연히 복구됨
 
 ### 6.6 DEL 장애 타이밍 (C6)
 - [ ] 삭제 연산에 동일 패턴 적용
+
+### 테스트 방식
+- **Mock 기반**: 특정 시점 실패 시뮬레이션
+- **SIGKILL 기반**: subprocess + SIGKILL로 실제 프로세스 종료
+  - hook 주입으로 특정 시점에 대기 → SIGKILL로 프로세스 종료
+- **한계**: SIGKILL은 프로세스만 죽임. OS 커널 버퍼는 살아있어 flush 후 fsync 전 상태는 정확히 테스트 불가
 
 ---
 
@@ -209,4 +219,4 @@
 - [x] Phase 3 완료 - WAL 파일 관리 객체
 - [x] Phase 4 완료 - KVStore와 WAL 통합
 - [x] Phase 5 완료 - 내구성/복구 시나리오
-- [ ] Phase 6 진행 예정 - 장애 타이밍 주입
+- [ ] Phase 6 진행 중 - 장애 타이밍 주입 (C1~C5 완료, C6 진행 예정)
