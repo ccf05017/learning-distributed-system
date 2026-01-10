@@ -179,3 +179,57 @@ class TestWALRead:
         assert len(records) == 2
         assert records[0].key == "key1"
         assert records[1].key == "key2"
+
+
+class TestWALCorruptionHandling:
+    """Phase 8: WAL 손상/부분 레코드 처리"""
+
+    def test_partial_record_at_end_is_ignored(self, tmp_path):
+        """8.1 끝부분 불완전 레코드는 무시한다"""
+        wal_path = tmp_path / "wal.log"
+
+        # 정상 레코드 작성
+        wal = WAL(wal_path)
+        wal.append(WALRecord(RecordType.PUT, "key1", "value1"))
+        wal.close()
+
+        # 불완전 레코드 추가 (줄바꿈 없이 끊김)
+        with open(wal_path, "ab") as f:
+            f.write(b'{"type":"PUT","key":"key2"')  # 불완전한 JSON
+
+        # 읽기 - 완전한 레코드만 반환
+        records = list(WAL.read(wal_path))
+        assert len(records) == 1
+        assert records[0].key == "key1"
+
+    def test_empty_wal_returns_no_records(self, tmp_path):
+        """8.4 빈 WAL은 빈 상태로 복구한다"""
+        wal_path = tmp_path / "wal.log"
+        wal_path.touch()  # 빈 파일 생성
+
+        records = list(WAL.read(wal_path))
+        assert len(records) == 0
+
+    def test_invalid_record_type_stops_reading(self, tmp_path):
+        """8.3 잘못된 레코드 타입이면 읽기를 중단한다"""
+        import json
+        import struct
+        import zlib
+
+        wal_path = tmp_path / "wal.log"
+
+        # 정상 레코드 작성
+        wal = WAL(wal_path)
+        wal.append(WALRecord(RecordType.PUT, "key1", "value1"))
+        wal.close()
+
+        # 잘못된 타입의 레코드 추가 (유효한 체크섬이지만 잘못된 type 값)
+        invalid_payload = json.dumps({"type": 999, "key": "key2", "value": "value2"}).encode()
+        invalid_checksum = zlib.crc32(invalid_payload)
+        with open(wal_path, "ab") as f:
+            f.write(struct.pack(">I", invalid_checksum) + invalid_payload + b"\n")
+
+        # 읽기 - 잘못된 레코드 전까지만 반환
+        records = list(WAL.read(wal_path))
+        assert len(records) == 1
+        assert records[0].key == "key1"

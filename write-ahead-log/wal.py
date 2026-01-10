@@ -57,5 +57,6 @@ class WAL:
                 if line.strip():
                     try:
                         yield WALRecord.deserialize(line)
-                    except ChecksumError:
+                    except Exception:
+                        # TODO: 실무에서는 로깅 필요 - 어떤 예외로 복구가 중단됐는지 기록
                         return
