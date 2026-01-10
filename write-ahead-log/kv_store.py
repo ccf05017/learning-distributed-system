@@ -2,6 +2,7 @@
 
 import json
 import os
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
@@ -20,6 +21,7 @@ class KVStore:
         self._data = {}
         self._wal = None
         self._data_dir = data_dir
+        self._lock = threading.Lock()
 
         if data_dir:
             checkpoint_path = data_dir / "checkpoint.json"
@@ -58,60 +60,68 @@ class KVStore:
             self._apply_record(record)
 
     def put(self, key: str, value: str) -> None:
-        record = WALRecord(RecordType.PUT, key, value)
-        if self._wal:
-            offset = self._wal.append(record)
-            try:
-                self._wal.sync()
-            except Exception:
-                self._wal.rollback(offset)
-                raise
-        self._apply_record(record)
+        if not key:
+            raise ValueError("key cannot be empty")
+        with self._lock:
+            record = WALRecord(RecordType.PUT, key, value)
+            if self._wal:
+                offset = self._wal.append(record)
+                try:
+                    self._wal.sync()
+                except Exception:
+                    self._wal.rollback(offset)
+                    raise
+            self._apply_record(record)
 
     def get(self, key: str) -> str | None:
         return self._data.get(key)
 
     def delete(self, key: str) -> None:
-        record = WALRecord(RecordType.DEL, key)
-        if self._wal:
-            offset = self._wal.append(record)
-            try:
-                self._wal.sync()
-            except Exception:
-                self._wal.rollback(offset)
-                raise
-        self._apply_record(record)
+        if not key:
+            raise ValueError("key cannot be empty")
+        with self._lock:
+            record = WALRecord(RecordType.DEL, key)
+            if self._wal:
+                offset = self._wal.append(record)
+                try:
+                    self._wal.sync()
+                except Exception:
+                    self._wal.rollback(offset)
+                    raise
+            self._apply_record(record)
 
     def checkpoint(self) -> None:
         """현재 상태를 체크포인트로 저장하고 WAL을 초기화"""
         if not self._data_dir:
             return
 
-        # WAL을 먼저 sync하여 모든 데이터가 디스크에 있도록 함
-        if self._wal:
-            self._wal.sync()
+        with self._lock:
+            # WAL을 먼저 sync하여 모든 데이터가 디스크에 있도록 함
+            if self._wal:
+                self._wal.sync()
 
-        checkpoint_path = self._data_dir / "checkpoint.json"
-        checkpoint_tmp = self._data_dir / "checkpoint.tmp"
+            checkpoint_path = self._data_dir / "checkpoint.json"
+            checkpoint_tmp = self._data_dir / "checkpoint.tmp"
 
-        # tmp 파일에 먼저 작성
-        with open(checkpoint_tmp, "w") as f:
-            json.dump(self._data, f)
-            f.flush()
-            os.fsync(f.fileno())
+            # tmp 파일에 먼저 작성
+            with open(checkpoint_tmp, "w") as f:
+                json.dump(self._data, f)
+                f.flush()
+                os.fsync(f.fileno())
 
-        # atomic rename (POSIX)
-        try:
-            os.rename(checkpoint_tmp, checkpoint_path)
-        except Exception:
-            # 실패 시 tmp 파일 정리
-            checkpoint_tmp.unlink(missing_ok=True)
-            raise
+            # atomic rename (POSIX)
+            try:
+                os.rename(checkpoint_tmp, checkpoint_path)
+            except Exception:
+                # 실패 시 tmp 파일 정리
+                checkpoint_tmp.unlink(missing_ok=True)
+                raise
 
-        # WAL 초기화 (체크포인트에 모든 상태가 있으므로)
-        if self._wal:
-            self._wal.rollback(0)
+            # WAL 초기화 (체크포인트에 모든 상태가 있으므로)
+            if self._wal:
+                self._wal.rollback(0)
 
     def close(self) -> None:
-        if self._wal:
-            self._wal.close()
+        with self._lock:
+            if self._wal:
+                self._wal.close()

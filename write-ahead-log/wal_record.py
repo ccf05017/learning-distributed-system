@@ -1,7 +1,6 @@
 """WAL 레코드 객체"""
 
 import json
-import struct
 import zlib
 from enum import Enum
 
@@ -29,13 +28,19 @@ class WALRecord:
         }
         payload = json.dumps(data).encode("utf-8")
         checksum = zlib.crc32(payload)
-        return struct.pack(">I", checksum) + payload + b"\n"
+        # 줄 기반 파싱을 위해 레코드 전체를 텍스트 안전한 바이트로 구성한다.
+        # 형식: "{crc32_hex} {json_payload}\n"
+        header = f"{checksum:08x} ".encode("ascii")
+        return header + payload + b"\n"
 
     @classmethod
     def deserialize(cls, data: bytes) -> "WALRecord":
         data = data.rstrip(b"\n")
-        stored_checksum = struct.unpack(">I", data[:4])[0]
-        payload = data[4:]
+        try:
+            checksum_hex, payload = data.split(b" ", 1)
+            stored_checksum = int(checksum_hex.decode("ascii"), 16)
+        except Exception as e:
+            raise ChecksumError("Invalid checksum header") from e
 
         computed_checksum = zlib.crc32(payload)
         if stored_checksum != computed_checksum:

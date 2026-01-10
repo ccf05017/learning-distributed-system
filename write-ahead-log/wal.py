@@ -47,7 +47,8 @@ class WAL:
         self._file.truncate()
 
     def close(self) -> None:
-        self.sync()
+        self._file.flush()
+        os.fsync(self._file.fileno())
         self._file.close()
 
     @classmethod

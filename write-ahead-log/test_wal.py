@@ -213,7 +213,6 @@ class TestWALCorruptionHandling:
     def test_invalid_record_type_stops_reading(self, tmp_path):
         """8.3 잘못된 레코드 타입이면 읽기를 중단한다"""
         import json
-        import struct
         import zlib
 
         wal_path = tmp_path / "wal.log"
@@ -227,7 +226,7 @@ class TestWALCorruptionHandling:
         invalid_payload = json.dumps({"type": 999, "key": "key2", "value": "value2"}).encode()
         invalid_checksum = zlib.crc32(invalid_payload)
         with open(wal_path, "ab") as f:
-            f.write(struct.pack(">I", invalid_checksum) + invalid_payload + b"\n")
+            f.write(f"{invalid_checksum:08x} ".encode("ascii") + invalid_payload + b"\n")
 
         # 읽기 - 잘못된 레코드 전까지만 반환
         records = list(WAL.read(wal_path))

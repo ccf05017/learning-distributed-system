@@ -433,3 +433,107 @@ class TestReplayIdempotency:
 
         store2 = KVStore(data_dir=tmp_path)
         assert store2.get("key1") == "resurrected"
+
+
+class TestBoundaryValues:
+    """G1. 경계값 테스트 - 빈 키/긴 키/큰 값"""
+
+    def test_empty_key_is_rejected_on_put(self):
+        """빈 키는 PUT에서 거부된다"""
+        store = KVStore()
+
+        with pytest.raises(ValueError, match="key"):
+            store.put("", "value")
+
+    def test_empty_key_is_rejected_on_delete(self):
+        """빈 키는 DELETE에서 거부된다"""
+        store = KVStore()
+
+        with pytest.raises(ValueError, match="key"):
+            store.delete("")
+
+    def test_long_key_works(self, tmp_path):
+        """긴 키도 정상 동작한다"""
+        store = KVStore(data_dir=tmp_path)
+        long_key = "k" * 10000
+
+        store.put(long_key, "value")
+        assert store.get(long_key) == "value"
+
+        store.close()
+
+        # 재시작 후에도 복구
+        store2 = KVStore(data_dir=tmp_path)
+        assert store2.get(long_key) == "value"
+
+    def test_large_value_works(self, tmp_path):
+        """큰 값도 정상 동작한다"""
+        store = KVStore(data_dir=tmp_path)
+        large_value = "v" * 100000
+
+        store.put("key", large_value)
+        assert store.get("key") == large_value
+
+        store.close()
+
+        # 재시작 후에도 복구
+        store2 = KVStore(data_dir=tmp_path)
+        assert store2.get("key") == large_value
+
+    def test_empty_value_works(self):
+        """빈 값은 허용된다"""
+        store = KVStore()
+
+        store.put("key", "")
+        assert store.get("key") == ""
+
+
+class TestConcurrency:
+    """G3. 동시성 - 멀티 스레드 안전성"""
+
+    def test_concurrent_writes_do_not_corrupt_wal(self, tmp_path):
+        """동시 쓰기가 WAL을 손상시키지 않는다"""
+        import threading
+
+        store = KVStore(data_dir=tmp_path)
+        num_threads = 10
+        writes_per_thread = 100
+        errors = []
+
+        def writer(thread_id):
+            try:
+                for i in range(writes_per_thread):
+                    store.put(f"key_{thread_id}_{i}", f"value_{thread_id}_{i}")
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=writer, args=(t,)) for t in range(num_threads)]
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # 메모리 상태 확인 (close 전)
+        memory_count = sum(
+            1 for t in range(num_threads)
+            for i in range(writes_per_thread)
+            if store.get(f"key_{t}_{i}") == f"value_{t}_{i}"
+        )
+
+        store.close()
+
+        # 에러 없이 완료
+        assert not errors, f"Errors occurred: {errors}"
+
+        # 메모리 상태는 정확해야 함
+        assert memory_count == num_threads * writes_per_thread
+
+        # 재시작 후 모든 데이터 복구 가능 (WAL 손상 없음)
+        store2 = KVStore(data_dir=tmp_path)
+        recovered_count = sum(
+            1 for t in range(num_threads)
+            for i in range(writes_per_thread)
+            if store2.get(f"key_{t}_{i}") == f"value_{t}_{i}"
+        )
+        assert recovered_count == num_threads * writes_per_thread
