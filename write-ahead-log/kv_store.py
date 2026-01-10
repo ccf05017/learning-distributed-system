@@ -2,49 +2,49 @@
 
 from pathlib import Path
 
+from wal import WAL
+from wal_record import RecordType, WALRecord
+
 
 class KVStore:
     def __init__(self, data_dir: Path | None = None):
         self._data = {}
-        self._wal_file = None
+        self._wal = None
 
         if data_dir:
             wal_path = data_dir / "wal.log"
             if wal_path.exists():
                 self._recover(wal_path)
-            self._wal_file = open(wal_path, "a")
+            self._wal = WAL(wal_path)
+
+    def _apply_record(self, record: WALRecord) -> None:
+        if record.record_type == RecordType.PUT:
+            self._data[record.key] = record.value
+        elif record.record_type == RecordType.DEL:
+            if record.key in self._data:
+                del self._data[record.key]
 
     def _recover(self, wal_path: Path) -> None:
-        with open(wal_path, "r") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                parts = line.split("\t")
-                op = parts[0]
-                if op == "PUT":
-                    self._data[parts[1]] = parts[2]
-                elif op == "DEL":
-                    if parts[1] in self._data:
-                        del self._data[parts[1]]
+        for record in WAL.read(wal_path):
+            self._apply_record(record)
 
     def put(self, key: str, value: str) -> None:
-        if self._wal_file:
-            self._wal_file.write(f"PUT\t{key}\t{value}\n")
-            self._wal_file.flush()
-        self._data[key] = value
+        record = WALRecord(RecordType.PUT, key, value)
+        if self._wal:
+            self._wal.append(record)
+            self._wal.sync()
+        self._apply_record(record)
 
     def get(self, key: str) -> str | None:
         return self._data.get(key)
 
     def delete(self, key: str) -> None:
-        if self._wal_file:
-            self._wal_file.write(f"DEL\t{key}\n")
-            self._wal_file.flush()
-        if key in self._data:
-            del self._data[key]
+        record = WALRecord(RecordType.DEL, key)
+        if self._wal:
+            self._wal.append(record)
+            self._wal.sync()
+        self._apply_record(record)
 
     def close(self) -> None:
-        if self._wal_file:
-            self._wal_file.flush()
-            self._wal_file.close()
+        if self._wal:
+            self._wal.close()

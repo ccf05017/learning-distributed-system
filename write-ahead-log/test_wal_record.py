@@ -1,13 +1,17 @@
 """WAL 레코드 객체 테스트"""
 
+import json
+
+import pytest
+
+from wal_record import ChecksumError, RecordType, WALRecord
+
 
 class TestWALRecordBasic:
     """WALRecord 기본 구조 테스트"""
 
     def test_record_has_put_type(self):
         """PUT 타입 레코드를 생성할 수 있다"""
-        from wal_record import WALRecord, RecordType
-
         record = WALRecord(RecordType.PUT, "key1", "value1")
 
         assert record.record_type == RecordType.PUT
@@ -16,8 +20,6 @@ class TestWALRecordBasic:
 
     def test_record_has_del_type(self):
         """DEL 타입 레코드를 생성할 수 있다"""
-        from wal_record import WALRecord, RecordType
-
         record = WALRecord(RecordType.DEL, "key1")
 
         assert record.record_type == RecordType.DEL
@@ -26,8 +28,6 @@ class TestWALRecordBasic:
 
     def test_serialize_put_record(self):
         """PUT 레코드를 바이트로 직렬화할 수 있다"""
-        from wal_record import WALRecord, RecordType
-
         record = WALRecord(RecordType.PUT, "key1", "value1")
         data = record.serialize()
 
@@ -36,8 +36,6 @@ class TestWALRecordBasic:
 
     def test_deserialize_put_record(self):
         """바이트에서 PUT 레코드를 역직렬화할 수 있다"""
-        from wal_record import WALRecord, RecordType
-
         original = WALRecord(RecordType.PUT, "key1", "value1")
         data = original.serialize()
 
@@ -53,9 +51,6 @@ class TestWALRecordChecksum:
 
     def test_serialized_record_includes_checksum(self):
         """직렬화된 레코드에 체크섬이 포함된다"""
-        import json
-        from wal_record import WALRecord, RecordType
-
         key, value = "key1", "value1"
         record = WALRecord(RecordType.PUT, key, value)
 
@@ -71,9 +66,6 @@ class TestWALRecordChecksum:
 
     def test_corrupted_record_raises_error(self):
         """손상된 레코드 역직렬화 시 오류가 발생한다"""
-        import pytest
-        from wal_record import WALRecord, RecordType, ChecksumError
-
         record = WALRecord(RecordType.PUT, "key1", "value1")
         data = bytearray(record.serialize())
 
@@ -88,8 +80,6 @@ class TestWALRecordFraming:
 
     def test_serialized_record_ends_with_newline(self):
         """직렬화된 레코드는 줄바꿈으로 끝난다"""
-        from wal_record import WALRecord, RecordType
-
         record = WALRecord(RecordType.PUT, "key1", "value1")
         data = record.serialize()
 
@@ -97,8 +87,6 @@ class TestWALRecordFraming:
 
     def test_multiple_records_can_be_split_by_newline(self):
         """여러 레코드를 줄바꿈으로 분리할 수 있다"""
-        from wal_record import WALRecord, RecordType
-
         record1 = WALRecord(RecordType.PUT, "key1", "value1")
         record2 = WALRecord(RecordType.PUT, "key2", "value2")
 
@@ -115,8 +103,6 @@ class TestWALRecordFraming:
 
     def test_value_with_newline_does_not_break_framing(self):
         """값에 줄바꿈이 포함되어도 프레이밍이 깨지지 않는다"""
-        from wal_record import WALRecord, RecordType
-
         value_with_newline = "hello\nworld"
         record = WALRecord(RecordType.PUT, "key1", value_with_newline)
 
