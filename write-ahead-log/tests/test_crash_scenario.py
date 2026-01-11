@@ -24,7 +24,7 @@ from unittest.mock import patch
 
 import pytest
 
-from kv_store import KVStore
+from src.kv_store import KVStore
 
 
 # === Helper functions for SIGKILL-based tests ===
@@ -49,7 +49,8 @@ def spawn_and_kill(
     value: str | None = None,
 ) -> None:
     """Worker 프로세스를 시작하고 마커 확인 후 SIGKILL"""
-    worker_script = Path(__file__).parent / "crash_test_worker.py"
+    worker_script = Path(__file__).parent.parent / "src" / "crash_test_worker.py"
+    project_root = Path(__file__).parent.parent
 
     args = [
         sys.executable,
@@ -63,10 +64,14 @@ def spawn_and_kill(
     if value is not None:
         args.append(value)
 
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(project_root) + os.pathsep + env.get("PYTHONPATH", "")
+
     proc = subprocess.Popen(
         args,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env=env,
     )
 
     try:

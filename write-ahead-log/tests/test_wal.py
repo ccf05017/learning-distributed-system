@@ -1,7 +1,7 @@
 """WAL 파일 관리 객체 테스트"""
 
-from wal import WAL
-from wal_record import RecordType, WALRecord
+from src.wal import WAL
+from src.wal_record import RecordType, WALRecord
 
 
 class TestWALContextManager:

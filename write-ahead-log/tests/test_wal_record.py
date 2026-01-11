@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from wal_record import ChecksumError, RecordType, WALRecord
+from src.wal_record import ChecksumError, RecordType, WALRecord
 
 
 class TestWALRecordBasic:

@@ -4,7 +4,7 @@ import os
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
-from wal_record import ChecksumError, WALRecord
+from src.wal_record import ChecksumError, WALRecord
 
 
 class WAL:

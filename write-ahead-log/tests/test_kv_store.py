@@ -4,8 +4,8 @@ from unittest.mock import patch
 
 import pytest
 
-from kv_store import KVStore
-from wal import WAL
+from src.kv_store import KVStore
+from src.wal import WAL
 
 
 class TestBasicOperations:

@@ -20,7 +20,7 @@ import sys
 import time
 from pathlib import Path
 
-from kv_store import KVStore
+from src.kv_store import KVStore
 
 
 def create_marker_and_wait(marker_path: Path) -> None:

@@ -6,8 +6,8 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
-from wal import WAL
-from wal_record import RecordType, WALRecord
+from src.wal import WAL
+from src.wal_record import RecordType, WALRecord
 
 
 class KVStore:
