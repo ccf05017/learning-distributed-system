@@ -1,10 +1,11 @@
 """WAL 파일 관리 객체"""
-
 import os
+import json
+
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
-from wal_record import ChecksumError, WALRecord
+from src.wal_record import WALRecord, ChecksumError
 
 
 class WAL:
@@ -16,48 +17,48 @@ class WAL:
         post_sync_hook: Callable[[], None] | None = None,
     ):
         self._path = path
-        self._file = open(path, "ab")
-        self._post_append_hook = post_append_hook
-        self._post_flush_hook = post_flush_hook
-        self._post_sync_hook = post_sync_hook
+        self._file = open(self._path, "ab")
 
     def __enter__(self) -> "WAL":
-        return self
+        pass
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        self.close()
+        pass
 
     def append(self, record: WALRecord) -> int:
         offset = self._file.tell()
         self._file.write(record.serialize())
-        if self._post_append_hook:
-            self._post_append_hook()
         return offset
 
     def sync(self) -> None:
         self._file.flush()
-        if self._post_flush_hook:
-            self._post_flush_hook()
         os.fsync(self._file.fileno())
-        if self._post_sync_hook:
-            self._post_sync_hook()
 
     def rollback(self, offset: int) -> None:
+        self._file.flush()
+        self._file.truncate(offset)
         self._file.seek(offset)
-        self._file.truncate()
 
     def close(self) -> None:
         self._file.flush()
-        os.fsync(self._file.fileno())
         self._file.close()
 
+    # WAL 읽기는 초기 단계에서만 실행되고, 읽기와 쓰기는 동시에 수행 불가능하기 때문에 
     @classmethod
     def read(cls, path: Path) -> Iterator[WALRecord]:
+        path = Path(path)
+
+        if not path.exists:
+            return
+        
         with open(path, "rb") as f:
             for line in f:
-                if line.strip():
-                    try:
-                        yield WALRecord.deserialize(line)
-                    except Exception:
-                        # TODO: 실무에서는 로깅 필요 - 어떤 예외로 복구가 중단됐는지 기록
-                        return
+                striped = line.strip()
+                
+                if not striped:
+                    continue
+                try:
+                    yield WALRecord.deserialize(line)
+                except (json.JSONDecodeError, ChecksumError, KeyError, ValueError):
+                    # 손상된 레코드 발견 시 중단
+                    return

@@ -4,55 +4,55 @@ from unittest.mock import patch
 
 import pytest
 
-from kv_store import KVStore
-from wal import WAL
+from src.kv_store import KVStore
+from src.wal import WAL
 
 
 class TestBasicOperations:
     """A. 기본 동작(정상 시나리오)"""
 
-    def test_put_and_get_returns_value(self):
+    def test_put_and_get_returns_value(self, tmp_path):
         """A1. PUT/GET 기본
         Given: 빈 스토어
         When: PUT(k, v1) 수행 후 GET(k)
         Then: GET(k)는 v1을 반환한다
         """
-        store = KVStore()
+        store = KVStore(tmp_path)
         store.put("key1", "value1")
 
         assert store.get("key1") == "value1"
 
-    def test_put_overwrites_existing_value(self):
+    def test_put_overwrites_existing_value(self, tmp_path):
         """A2. UPDATE(덮어쓰기)
         Given: PUT(k, v1)이 완료된 스토어
         When: PUT(k, v2) 수행 후 GET(k)
         Then: GET(k)는 v2를 반환한다
         """
-        store = KVStore()
+        store = KVStore(tmp_path)
         store.put("key1", "value1")
         store.put("key1", "value2")
 
         assert store.get("key1") == "value2"
-
-    def test_delete_removes_key(self):
+#
+    def test_delete_removes_key(self, tmp_path):
         """A3. DELETE
         Given: PUT(k, v1)이 완료된 스토어
         When: DEL(k) 수행 후 GET(k)
         Then: GET(k)는 존재하지 않음을 반환한다
         """
-        store = KVStore()
+        store = KVStore(tmp_path)
         store.put("key1", "value1")
         store.delete("key1")
 
         assert store.get("key1") is None
 
-    def test_multiple_keys_are_independent(self):
+    def test_multiple_keys_are_independent(self, tmp_path):
         """A4. 다중 키 독립성
         Given: 빈 스토어
         When: PUT(k1, v1), PUT(k2, v2) 수행
         Then: GET(k1)=v1이고 GET(k2)=v2다
         """
-        store = KVStore()
+        store = KVStore(tmp_path)
         store.put("key1", "value1")
         store.put("key2", "value2")
 
@@ -217,6 +217,15 @@ class TestCheckpoint:
         store.put("key1", "value1")
         store.put("key2", "value2")
         store.checkpoint()
+
+        # checkpoint 후 WAL이 비워졌는지 확인 (핵심!)
+        wal_path = tmp_path / "wal.log"
+        assert wal_path.stat().st_size == 0, "checkpoint 후 WAL은 비어야 함"
+
+        # checkpoint 파일이 생성되었는지 확인
+        checkpoint_path = tmp_path / "checkpoint.json"
+        assert checkpoint_path.exists(), "checkpoint 파일이 없음"
+
         store.close()
 
         # 재시작 후 복구
@@ -438,16 +447,16 @@ class TestReplayIdempotency:
 class TestBoundaryValues:
     """G1. 경계값 테스트 - 빈 키/긴 키/큰 값"""
 
-    def test_empty_key_is_rejected_on_put(self):
+    def test_empty_key_is_rejected_on_put(self, tmp_path):
         """빈 키는 PUT에서 거부된다"""
-        store = KVStore()
+        store = KVStore(tmp_path)
 
         with pytest.raises(ValueError, match="key"):
             store.put("", "value")
 
-    def test_empty_key_is_rejected_on_delete(self):
+    def test_empty_key_is_rejected_on_delete(self, tmp_path):
         """빈 키는 DELETE에서 거부된다"""
-        store = KVStore()
+        store = KVStore(tmp_path)
 
         with pytest.raises(ValueError, match="key"):
             store.delete("")
@@ -480,9 +489,9 @@ class TestBoundaryValues:
         store2 = KVStore(data_dir=tmp_path)
         assert store2.get("key") == large_value
 
-    def test_empty_value_works(self):
+    def test_empty_value_works(self, tmp_path):
         """빈 값은 허용된다"""
-        store = KVStore()
+        store = KVStore(tmp_path)
 
         store.put("key", "")
         assert store.get("key") == ""
@@ -537,3 +546,68 @@ class TestConcurrency:
             if store2.get(f"key_{t}_{i}") == f"value_{t}_{i}"
         )
         assert recovered_count == num_threads * writes_per_thread
+
+    
+    def test_concurrent_failed_put_does_not_lose_other_thread_commit(self, tmp_path):
+        """한 스레드의 PUT 실패(rollback)가 다른 스레드의 커밋을 날리지 않아야 한다"""
+        import threading
+
+        store = KVStore(data_dir=tmp_path)
+
+        a_appended = threading.Event()
+        b_synced = threading.Event()
+        a_error: list[Exception] = []
+        b_error: list[Exception] = []
+
+        original_append = store._wal.append
+        original_sync = store._wal.sync
+
+        def append_wrapped(record):
+            offset = original_append(record)
+            if record.key == "a":
+                a_appended.set()
+            return offset
+
+        def sync_wrapped():
+            if threading.current_thread().name == "writer-a":
+                if not b_synced.wait(timeout=5):
+                    raise TimeoutError("writer-b did not sync in time")
+                raise OSError("injected fsync failure for writer-a")
+
+            original_sync()
+            b_synced.set()
+
+        store._wal.append = append_wrapped
+        store._wal.sync = sync_wrapped
+
+        def writer_a():
+            try:
+                store.put("a", "va")
+            except Exception as e:
+                a_error.append(e)
+
+        def writer_b():
+            try:
+                store.put("b", "vb")
+            except Exception as e:
+                b_error.append(e)
+
+        ta = threading.Thread(target=writer_a, name="writer-a")
+        tb = threading.Thread(target=writer_b, name="writer-b")
+
+        ta.start()
+        if not a_appended.wait(timeout=5):
+            raise TimeoutError("writer-a did not append in time")
+        tb.start()
+
+        ta.join()
+        tb.join()
+
+        assert a_error, "writer-a should fail"
+        assert not b_error, f"writer-b should succeed, got: {b_error}"
+        assert store.get("b") == "vb"
+
+        store.close()
+
+        store2 = KVStore(data_dir=tmp_path)
+        assert store2.get("b") == "vb"

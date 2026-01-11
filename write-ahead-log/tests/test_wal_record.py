@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from wal_record import ChecksumError, RecordType, WALRecord
+from src.wal_record import ChecksumError, RecordType, WALRecord
 
 
 class TestWALRecordBasic:
@@ -55,25 +55,26 @@ class TestWALRecordChecksum:
         record = WALRecord(RecordType.PUT, key, value)
 
         payload = json.dumps({
-            "type": RecordType.PUT.value,
+            "record_type": RecordType.PUT.value,
             "key": key,
             "value": value,
         }).encode("utf-8")
 
         serialized = record.serialize()
 
-        assert len(serialized) > len(payload)
+        assert len(serialized) > len(payload) + 8
 
     def test_corrupted_record_raises_error(self):
         """손상된 레코드 역직렬화 시 오류가 발생한다"""
         record = WALRecord(RecordType.PUT, "key1", "value1")
-        data = bytearray(record.serialize())
+        serialized = bytearray(record.serialize())
 
-        data[10] = (data[10] + 1) % 256
+        parsed = json.loads(serialized.decode("utf-8"))
+        parsed["value"] = "corrupted_value"  # 체크섬은 그대로 두고 값만 변경
+        corrupted = json.dumps(parsed).encode("utf-8")
 
         with pytest.raises(ChecksumError):
-            WALRecord.deserialize(bytes(data))
-
+            WALRecord.deserialize(bytes(corrupted))
 
 class TestWALRecordFraming:
     """레코드 프레이밍 테스트"""
