@@ -1,9 +1,11 @@
 """WAL 파일 관리 객체"""
+import os
+import json
 
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
-from src.wal_record import WALRecord
+from src.wal_record import WALRecord, ChecksumError
 
 
 class WAL:
@@ -14,7 +16,8 @@ class WAL:
         post_flush_hook: Callable[[], None] | None = None,
         post_sync_hook: Callable[[], None] | None = None,
     ):
-        pass
+        self._path = path
+        self._file = open(self._path, "ab")
 
     def __enter__(self) -> "WAL":
         pass
@@ -23,17 +26,39 @@ class WAL:
         pass
 
     def append(self, record: WALRecord) -> int:
-        pass
+        offset = self._file.tell()
+        self._file.write(record.serialize())
+        return offset
 
     def sync(self) -> None:
-        pass
+        self._file.flush()
+        os.fsync(self._file.fileno())
 
     def rollback(self, offset: int) -> None:
-        pass
+        self._file.flush()
+        self._file.truncate(offset)
+        self._file.seek(offset)
 
     def close(self) -> None:
-        pass
+        self._file.flush()
+        self._file.close()
 
+    # WAL 읽기는 초기 단계에서만 실행되고, 읽기와 쓰기는 동시에 수행 불가능하기 때문에 
     @classmethod
     def read(cls, path: Path) -> Iterator[WALRecord]:
-        pass
+        path = Path(path)
+
+        if not path.exists:
+            return
+        
+        with open(path, "rb") as f:
+            for line in f:
+                striped = line.strip()
+                
+                if not striped:
+                    continue
+                try:
+                    yield WALRecord.deserialize(line)
+                except (json.JSONDecodeError, ChecksumError, KeyError, ValueError):
+                    # 손상된 레코드 발견 시 중단
+                    return
